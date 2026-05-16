@@ -48,6 +48,7 @@ const state = {
     uiDirty: false,
     logThrottle: 0,
     durationTimerId: null,
+    acquireFrozenMs: 0,
     zoomType: null,
     zoomIdx: null,
     zoomChart: null
@@ -282,7 +283,16 @@ function createValueGrid(containerId, labels, colors) {
     labels.forEach((label, i) => {
         const div = document.createElement('div');
         div.className = 'data-cell';
-        div.innerHTML = `<span class="label" style="color:${colors[i]||'#475569'}">${label}</span><span class="value" id="${containerId}-v${i}">--</span>`;
+        const labelEl = document.createElement('span');
+        labelEl.className = 'label';
+        if (colors && colors[i]) labelEl.style.color = colors[i];
+        labelEl.textContent = label;
+        const valueEl = document.createElement('span');
+        valueEl.className = 'value';
+        valueEl.id = `${containerId}-v${i}`;
+        valueEl.textContent = '--';
+        div.appendChild(labelEl);
+        div.appendChild(valueEl);
         container.appendChild(div);
     });
 }
@@ -402,13 +412,18 @@ function toggleTheme() {
 }
 
 // ==================== 时长定时器 ====================
+function tickDuration() {
+    const now = Date.now();
+    dom.connDuration.textContent = state.connectStartTime ? formatDuration(now - state.connectStartTime) : '00:00:00';
+    let acqMs = state.acquireFrozenMs;
+    if (state.acquireStartTime) acqMs = now - state.acquireStartTime;
+    dom.acqDuration.textContent = formatDuration(acqMs);
+}
+
 function startDurationTimer() {
     if (state.durationTimerId !== null) return;
-    state.durationTimerId = setInterval(() => {
-        const now = Date.now();
-        dom.connDuration.textContent = state.connectStartTime ? formatDuration(now - state.connectStartTime) : '00:00:00';
-        dom.acqDuration.textContent = state.acquireStartTime ? formatDuration(now - state.acquireStartTime) : '00:00:00';
-    }, 1000);
+    tickDuration();
+    state.durationTimerId = setInterval(tickDuration, 1000);
 }
 
 function stopDurationTimer() {
@@ -430,11 +445,18 @@ function toggleCollect() {
         state.history = [];
         state.recordedCount = 0;
         state.acquireStartTime = Date.now();
+        state.acquireFrozenMs = 0;
+        tickDuration();
         btn.textContent = '停止采集';
         btn.className = 'btn-danger';
         addLog('debug', '▶ 开始记录数据（新会话）');
     } else {
         state.isRecording = false;
+        if (state.acquireStartTime) {
+            state.acquireFrozenMs = Date.now() - state.acquireStartTime;
+            state.acquireStartTime = null;
+        }
+        tickDuration();
         btn.textContent = '开始采集';
         btn.className = 'btn-primary';
         addLog('debug', '⏹ 停止记录数据');
@@ -718,7 +740,9 @@ class SerialConnection {
         stopDurationTimer();
         state.connectStartTime = null;
         state.acquireStartTime = null;
+        state.acquireFrozenMs = 0;
         state.isRecording = false;
+        tickDuration();
         const btn = dom.btnCollect;
         btn.textContent = '开始采集';
         btn.className = 'btn-primary';
@@ -748,8 +772,11 @@ function addLog(type, msg) {
     const counter = type === 'data' ? dom.dataLogCount : dom.debugLogCount;
     const entry = document.createElement('div');
     entry.className = 'log-entry ' + type;
-    const time = new Date().toLocaleTimeString('zh-CN', { hour12: false });
-    entry.innerHTML = `<span class="timestamp">[${time}]</span>${msg}`;
+    const ts = document.createElement('span');
+    ts.className = 'timestamp';
+    ts.textContent = `[${new Date().toLocaleTimeString('zh-CN', { hour12: false })}]`;
+    entry.appendChild(ts);
+    entry.appendChild(document.createTextNode(msg));
     container.appendChild(entry);
     while (container.children.length > CONFIG.LOG_MAX_LINES) {
         container.removeChild(container.firstChild);
@@ -773,6 +800,8 @@ function clearData() {
     state.frameCounter = 0;
     state.fps = 0;
     state.acquireStartTime = null;
+    state.acquireFrozenMs = 0;
+    tickDuration();
     dom.fps.textContent = '0';
     dom.totalFrames.textContent = '0';
     dom.recordedFrames.textContent = '0';
@@ -931,7 +960,8 @@ function cacheDom() {
 
 buildEmgPanels();
 for (let i = 0; i < CONFIG.EMG_CHANNELS; i++) {
-    createValueGrid(`vals-emg-${i}`, [`CH${i+1}(μV)`], [EMG_COLORS[i]]);
+    // EMG label 颜色由 CSS var(--ch) 接管，不传 colors
+    createValueGrid(`vals-emg-${i}`, [`CH${i+1}(μV)`], null);
 }
 createValueGrid('vals-imu', ['Ax','Ay','Az','Gx','Gy','Gz'], IMU_COLORS);
 cacheDom();
