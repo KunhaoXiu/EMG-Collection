@@ -5,81 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>多模态生物力学信号采集系统</title>
     <link rel="stylesheet" href="./styles/main.css">
-    <style>
-        /* ---------- 顶部控制区按钮 ---------- */
-        .header-card .btn-primary,
-        .header-card .btn-secondary,
-        .header-card .btn-danger {
-            font-size: clamp(0.7rem, 0.85vw, 0.95rem);
-            padding: clamp(5px, 0.5vw, 8px) clamp(8px, 1vw, 14px);
-            min-width: clamp(56px, 5.5vw, 88px);
-            min-height: clamp(26px, 2.2vw, 36px);
-            border-radius: clamp(4px, 0.35vw, 6px);
-            line-height: 1.2;
-            white-space: nowrap;
-            flex: 0 1 auto;
-            transition: all 0.2s ease;
-        }
-        .btn-icon {
-            width: clamp(22px, 2vw, 30px);
-            height: clamp(22px, 2vw, 30px);
-            aspect-ratio: 1 / 1;
-            padding: 0;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            font-size: clamp(0.65rem, 0.9vw, 0.9rem);
-            border-radius: clamp(3px, 0.3vw, 5px);
-            flex-shrink: 0;
-        }
-        .splash-enter-btn {
-            font-size: clamp(0.9rem, 1.8vw, 1.3rem);
-            padding: clamp(8px, 1.2vw, 14px) clamp(20px, 3.5vw, 40px);
-            min-height: clamp(36px, 3.5vw, 52px);
-            border-radius: clamp(6px, 0.8vw, 10px);
-            line-height: 1.2;
-        }
-        .splash-theme-btn {
-            font-size: clamp(0.7rem, 1vw, 0.9rem);
-            padding: clamp(4px, 0.5vw, 6px) clamp(8px, 1vw, 12px);
-            min-height: clamp(24px, 2vw, 32px);
-            border-radius: clamp(4px, 0.4vw, 6px);
-        }
-        .conn-buttons { gap: clamp(4px, 0.4vw, 8px); }
-        .data-buttons { gap: clamp(4px, 0.4vw, 8px); }
-        .status-dot {
-            width: clamp(8px, 0.8vw, 12px);
-            height: clamp(8px, 0.8vw, 12px);
-        }
-        .duration-box {
-            font-size: clamp(0.65rem, 0.75vw, 0.8rem);
-            padding: clamp(2px, 0.3vw, 4px) clamp(4px, 0.5vw, 8px);
-        }
-        .duration-value {
-            font-size: clamp(0.75rem, 0.9vw, 1rem);
-            min-width: clamp(60px, 6vw, 80px);
-        }
-        .modal-header .btn-secondary {
-            font-size: clamp(0.75rem, 0.9vw, 0.95rem);
-            padding: clamp(4px, 0.5vw, 6px) clamp(8px, 1vw, 12px);
-            min-height: clamp(24px, 2vw, 32px);
-            border-radius: clamp(4px, 0.35vw, 6px);
-        }
-
-        /* ==================== EMG 通道颜色 ==================== */
-        .emg1-color { color: #f87171; }  .emg1-dot { background: #ef4444; }
-        .emg2-color { color: #fb923c; }  .emg2-dot { background: #f97316; }
-        .emg3-color { color: #fbbf24; }  .emg3-dot { background: #f59e0b; }
-        .emg4-color { color: #4ade80; }  .emg4-dot { background: #22c55e; }
-        .emg5-color { color: #2dd4bf; }  .emg5-dot { background: #14b8a6; }
-        .emg6-color { color: #38bdf8; }  .emg6-dot { background: #0ea5e9; }
-        .emg7-color { color: #a78bfa; }  .emg7-dot { background: #8b5cf6; }
-        .emg8-color { color: #f472b6; }  .emg8-dot { background: #ec4899; }
-        .imu-color  { color: #4ade80; }  .imu-dot  { background: #22c55e; }
-
-        /* ==================== 肌电波形面板 ==================== */
-
-    </style>
 </head>
 <body class="splash-active">
 
@@ -104,7 +29,6 @@
 
     <!-- ==================== 主容器 ==================== -->
     <div class="container">
-        <!-- Header -->
         <header>
             <div class="header-top">
                 <div class="header-brand">
@@ -176,84 +100,16 @@
             </div>
         </header>
 
-        <!-- ==================== 第一行: EMG 通道 1-4 ==================== -->
-        <div class="row row-emg">
-            <div class="panel emg-panel">
-                <div class="panel-header">
-                    <div class="panel-title emg1-color"><span class="dot emg1-dot"></span>EMG CH1</div>
-                    <button class="btn-icon" onclick="openZoom('emg', 0)" title="放大">🔍</button>
-                </div>
-                <canvas id="canvas-emg-0"></canvas>
-                <div class="data-grid emg-grid-vals" id="vals-emg-0"></div>
-            </div>
-            <div class="panel emg-panel">
-                <div class="panel-header">
-                    <div class="panel-title emg2-color"><span class="dot emg2-dot"></span>EMG CH2</div>
-                    <button class="btn-icon" onclick="openZoom('emg', 1)" title="放大">🔍</button>
-                </div>
-                <canvas id="canvas-emg-1"></canvas>
-                <div class="data-grid emg-grid-vals" id="vals-emg-1"></div>
-            </div>
-            <div class="panel emg-panel">
-                <div class="panel-header">
-                    <div class="panel-title emg3-color"><span class="dot emg3-dot"></span>EMG CH3</div>
-                    <button class="btn-icon" onclick="openZoom('emg', 2)" title="放大">🔍</button>
-                </div>
-                <canvas id="canvas-emg-2"></canvas>
-                <div class="data-grid emg-grid-vals" id="vals-emg-2"></div>
-            </div>
-            <div class="panel emg-panel">
-                <div class="panel-header">
-                    <div class="panel-title emg4-color"><span class="dot emg4-dot"></span>EMG CH4</div>
-                    <button class="btn-icon" onclick="openZoom('emg', 3)" title="放大">🔍</button>
-                </div>
-                <canvas id="canvas-emg-3"></canvas>
-                <div class="data-grid emg-grid-vals" id="vals-emg-3"></div>
-            </div>
-        </div>
+        <!-- EMG 通道 1-8（由 app.js 动态生成）-->
+        <div class="row row-emg" id="row-emg-top"></div>
+        <div class="row row-emg" id="row-emg-bottom"></div>
 
-        <!-- ==================== 第二行: EMG 通道 5-8 ==================== -->
-        <div class="row row-emg">
-            <div class="panel emg-panel">
-                <div class="panel-header">
-                    <div class="panel-title emg5-color"><span class="dot emg5-dot"></span>EMG CH5</div>
-                    <button class="btn-icon" onclick="openZoom('emg', 4)" title="放大">🔍</button>
-                </div>
-                <canvas id="canvas-emg-4"></canvas>
-                <div class="data-grid emg-grid-vals" id="vals-emg-4"></div>
-            </div>
-            <div class="panel emg-panel">
-                <div class="panel-header">
-                    <div class="panel-title emg6-color"><span class="dot emg6-dot"></span>EMG CH6</div>
-                    <button class="btn-icon" onclick="openZoom('emg', 5)" title="放大">🔍</button>
-                </div>
-                <canvas id="canvas-emg-5"></canvas>
-                <div class="data-grid emg-grid-vals" id="vals-emg-5"></div>
-            </div>
-            <div class="panel emg-panel">
-                <div class="panel-header">
-                    <div class="panel-title emg7-color"><span class="dot emg7-dot"></span>EMG CH7</div>
-                    <button class="btn-icon" onclick="openZoom('emg', 6)" title="放大">🔍</button>
-                </div>
-                <canvas id="canvas-emg-6"></canvas>
-                <div class="data-grid emg-grid-vals" id="vals-emg-6"></div>
-            </div>
-            <div class="panel emg-panel">
-                <div class="panel-header">
-                    <div class="panel-title emg8-color"><span class="dot emg8-dot"></span>EMG CH8</div>
-                    <button class="btn-icon" onclick="openZoom('emg', 7)" title="放大">🔍</button>
-                </div>
-                <canvas id="canvas-emg-7"></canvas>
-                <div class="data-grid emg-grid-vals" id="vals-emg-7"></div>
-            </div>
-        </div>
-
-        <!-- ==================== 第三行: IMU + RMS 柱状图 ==================== -->
+        <!-- IMU 传感器 -->
         <div class="row row-imu">
             <div class="panel imu-panel">
                 <div class="panel-header">
                     <div class="panel-title imu-color"><span class="dot imu-dot"></span>IMU 传感器 (6通道)</div>
-                    <div style="display:flex; gap:6px; align-items:center;">
+                    <div class="panel-actions">
                         <button class="btn-icon" onclick="openZoom('imu', 0)" title="放大">🔍</button>
                     </div>
                 </div>
@@ -262,25 +118,24 @@
             </div>
         </div>
 
-        <!-- ==================== 第四行: 日志 ==================== -->
+        <!-- 日志 -->
         <div class="row row-logs">
-            <div class="panel" style="max-height:180px">
+            <div class="panel panel-log">
                 <div class="panel-header">
-                    <span style="color:#4ade80">📥 实时接收数据</span>
-                    <span id="data-log-count" style="font-size:0.7rem;color:#475569">0 条</span>
+                    <span class="log-data-title">📥 实时接收数据</span>
+                    <span class="log-count" id="data-log-count">0 条</span>
                 </div>
                 <div class="log-container" id="logData"></div>
             </div>
-            <div class="panel" style="max-height:180px">
+            <div class="panel panel-log">
                 <div class="panel-header">
-                    <span style="color:#94a3b8">🔧 调试信息</span>
-                    <span id="debug-log-count" style="font-size:0.7rem;color:#475569">0 条</span>
+                    <span class="log-debug-title">🔧 调试信息</span>
+                    <span class="log-count" id="debug-log-count">0 条</span>
                 </div>
                 <div class="log-container" id="logDebug"></div>
             </div>
         </div>
     </div>
-
 
     <script src="./scripts/app.js"></script>
 </body>

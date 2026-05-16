@@ -80,11 +80,12 @@ AA 和 BB 包共享同一个序号字段，每发一个包序号 +1，0xFF 后�
 
 | 列名 | 说明 |
 |------|------|
-| time | 北京时间（精确到厘秒） |
-| timestamp | 帧序号 |
-| emg1 ~ emg8 | 8 通道 EMG 值（μV） |
-| imu_ax, imu_ay, imu_az | 加速度三轴（m/s²） |
-| imu_gx, imu_gy, imu_gz | 陀螺仪三轴（rad/s） |
+| time | 北京时间（格式 `YYYY-MM-DD-HH-MM-SS`） |
+| emg1 ~ emg8 | 8 通道 EMG 值（μV，保留 2 位小数） |
+| imu_ax, imu_ay, imu_az | 加速度三轴（m/s²，保留 4 位小数） |
+| imu_gx, imu_gy, imu_gz | 陀螺仪三轴（rad/s，保留 4 位小数） |
+
+每个 EMG 包对应一行；IMU 列使用最近一次解析到的 IMU 值。丢包补 `NaN`。
 
 ## 项目结构
 
