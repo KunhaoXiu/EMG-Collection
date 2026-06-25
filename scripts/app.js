@@ -11,7 +11,10 @@ const CONFIG = {
     EMG_MAX_POINTS: 6000,
     IMU_MAX_POINTS: 1000,
     LOG_MAX_LINES: 100,
-    LOG_THROTTLE: 50
+    LOG_THROTTLE: 50,
+    NO_DATA_TIMEOUT_MS: 3000,   // 连接后多久仍无数据就警告"设备可能未开机"
+    RECORD_FLUSH_MS: 500,       // 定时刷盘间隔
+    RECORD_FLUSH_MAX: 2000      // 缓冲达到该行数立即刷盘（安全阀）
 };
 
 const EMG_COLORS = ['#ef4444','#f97316','#f59e0b','#22c55e','#14b8a6','#0ea5e9','#8b5cf6','#ec4899'];
@@ -31,27 +34,35 @@ const TIME_FMT = new Intl.DateTimeFormat('zh-CN', {
 
 // ==================== 状态 ====================
 const state = {
-    history: [],
     isPaused: false,
     isRecording: false,
     frameCount: 0,
     recordedCount: 0,
     errorCount: 0,
-    fps: 0,
-    frameCounter: 0,
+    emgFps: 0,
+    imuFps: 0,
+    emgCounter: 0,
+    imuCounter: 0,
     lastFrameTime: performance.now(),
     connectStartTime: null,
-    acquireStartTime: null,
+    recordStartTime: null,
     currentTheme: 'dark',
     latestEmg: null,
     latestImu: null,
     uiDirty: false,
     logThrottle: 0,
     durationTimerId: null,
-    acquireFrozenMs: 0,
+    recordFrozenMs: 0,
     zoomType: null,
     zoomIdx: null,
-    zoomChart: null
+    zoomChart: null,
+    // ==================== 边采边写盘（File System Access API）====================
+    // 记录时不再把全量数据囤在 history，而是把每行格式化后批量追加写入磁盘文件。
+    recordBuffer: [],           // 待写盘的已格式化 CSV 行
+    recordFlushTimer: null,     // 定时刷盘句柄
+    recordWritable: null,       // FileSystemWritableFileStream（非 null = 正在写盘记录）
+    recordFileName: null,       // 当前记录文件名
+    recordFlushing: false       // 刷盘在途标志，保证追加顺序、避免并发
 };
 
 // DOM 引用缓存（在 DOM 构建完成后填充）
@@ -71,10 +82,17 @@ function formatDuration(ms) {
     return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
 }
 
-function formatWorldTime(hrMs) {
-    const ms = hrMs != null ? hrMs : performance.timeOrigin + performance.now();
-    const parts = DATE_FMT.formatToParts(new Date(ms));
-    return `${fmtPart(parts,'year')}-${fmtPart(parts,'month')}-${fmtPart(parts,'day')}-${fmtPart(parts,'hour')}-${fmtPart(parts,'minute')}-${fmtPart(parts,'second')}`;
+// 记录时间戳精度到秒：同一秒内复用上次格式化结果，避免每个包都跑 Intl.formatToParts（记录热点）
+let _wtCacheSec = -1, _wtCacheStr = '';
+function formatWorldTime() {
+    const ms = performance.timeOrigin + performance.now();
+    const sec = Math.floor(ms / 1000);
+    if (sec !== _wtCacheSec) {
+        const parts = DATE_FMT.formatToParts(new Date(ms));
+        _wtCacheStr = `${fmtPart(parts,'year')}-${fmtPart(parts,'month')}-${fmtPart(parts,'day')}-${fmtPart(parts,'hour')}-${fmtPart(parts,'minute')}-${fmtPart(parts,'second')}`;
+        _wtCacheSec = sec;
+    }
+    return _wtCacheStr;
 }
 
 function formatBeijingClock(ms) {
@@ -142,23 +160,19 @@ class LineChart {
             l.count = 0;
         }
     }
-    latest() {
-        return this.lines.map(l => {
-            if (l.count === 0) return NaN;
-            const idx = (l.head - 1 + this.maxPoints) % this.maxPoints;
-            return l.data[idx];
-        });
-    }
     draw() {
         const ctx = this.ctx, w = this.width, h = this.height, N = this.maxPoints;
         const isLight = document.body.classList.contains('light-theme');
         ctx.clearRect(0, 0, w, h);
 
+        // Y 轴范围：按与点数解耦的跳点采样求 min/max（避免长时间采集后全量扫描拖慢每帧）
         let min = Infinity, max = -Infinity;
         for (const l of this.lines) {
             const data = l.data, count = l.count;
+            if (count === 0) continue;
             const base = count < N ? 0 : l.head;
-            for (let i = 0; i < count; i++) {
+            const scanStride = Math.max(1, Math.floor(count / (w * 2)));
+            for (let i = 0; i < count; i += scanStride) {
                 const v = data[(base + i) % N];
                 if (isFinite(v)) {
                     if (v < min) min = v;
@@ -371,7 +385,7 @@ function openZoom(type, idx) {
                 ctx.moveTo(x, xAxisY);
                 ctx.lineTo(x, xAxisY + 6);
                 ctx.stroke();
-                const fps = Math.max(state.fps, 1);
+                const fps = Math.max(state.zoomType === 'emg' ? state.emgFps : state.imuFps, 1);
                 const points = Math.max(2, ...chart.lines.map(l => l.count || 0));
                 const secAgo = ((points - 1) / fps) * (1 - ratio);
                 ctx.fillStyle = '#94a3b8';
@@ -415,9 +429,9 @@ function toggleTheme() {
 function tickDuration() {
     const now = Date.now();
     dom.connDuration.textContent = state.connectStartTime ? formatDuration(now - state.connectStartTime) : '00:00:00';
-    let acqMs = state.acquireFrozenMs;
-    if (state.acquireStartTime) acqMs = now - state.acquireStartTime;
-    dom.acqDuration.textContent = formatDuration(acqMs);
+    let recMs = state.recordFrozenMs;
+    if (state.recordStartTime) recMs = now - state.recordStartTime;
+    dom.recordDuration.textContent = formatDuration(recMs);
 }
 
 function startDurationTimer() {
@@ -433,40 +447,138 @@ function stopDurationTimer() {
     }
 }
 
-// ==================== 采集控制 ====================
-function toggleCollect() {
-    if (!serial.connected) {
-        addLog('debug', '请先连接串口');
+// ==================== CSV 格式化（导出与写盘共用，保证格式一致）====================
+function csvHeader() {
+    const cols = ['time'];
+    for (let i = 1; i <= CONFIG.EMG_CHANNELS; i++) cols.push(`emg${i}`);
+    cols.push('imu_ax', 'imu_ay', 'imu_az', 'imu_gx', 'imu_gy', 'imu_gz');
+    return cols.join(',') + '\n';
+}
+
+function frameToCsvRow(f) {
+    const emgPart = f.emg.map(v => fmtNum(v, 2)).join(',');
+    const imuPart = [...f.imu.accel, ...f.imu.gyro].map(v => fmtNum(v, 4)).join(',');
+    return `${f.time},${emgPart},${imuPart}\n`;
+}
+
+// ==================== 记录落点（边采边写盘入缓冲）====================
+function recordFrame(frame) {
+    if (!state.recordWritable) return;   // 统一边采边写盘：无写盘流则不记录
+    // 行入缓冲，由定时器批量落盘；不囤内存、无内存上限
+    state.recordBuffer.push(frameToCsvRow(frame));
+    state.recordedCount++;
+    if (state.recordBuffer.length >= CONFIG.RECORD_FLUSH_MAX) flushRecordBuffer();
+}
+
+// ==================== 写盘缓冲管理 ====================
+// 把缓冲写净；recordFlushing 保证同一时刻只有一个 write 在途（追加顺序正确、无并发）。
+async function flushRecordBuffer() {
+    if (state.recordFlushing || !state.recordBuffer.length || !state.recordWritable) return true;
+    state.recordFlushing = true;
+    try {
+        while (state.recordBuffer.length) {
+            const batch = state.recordBuffer.join('');
+            state.recordBuffer.length = 0;
+            try {
+                await state.recordWritable.write(batch);
+            } catch (e) {
+                // 写失败：把这批数据放回缓冲头部，保留待重试，并上报失败
+                state.recordBuffer.unshift(batch);
+                addLog('debug', `⚠ 写盘失败: ${e.message || e}`);
+                return false;
+            }
+        }
+    } finally {
+        state.recordFlushing = false;
+    }
+    return true;
+}
+
+// 收尾记录：停定时器 → 等在途刷盘结束 → 写净剩余 → 关闭文件 → 复位状态与按钮。可安全重复调用。
+async function stopRecordingIfActive() {
+    if (state.recordFlushTimer) { clearInterval(state.recordFlushTimer); state.recordFlushTimer = null; }
+    if (!state.recordWritable) return null;            // 非写盘记录态，无事可做
+    while (state.recordFlushing) { await new Promise(r => setTimeout(r, 10)); }
+    await flushRecordBuffer();                          // 写净剩余
+    const savedName = state.recordFileName;
+    try { await state.recordWritable.close(); }         // 关闭流 → 浏览器最终落盘
+    catch (e) { addLog('debug', `关闭记录文件失败: ${e.message || e}`); }
+    state.recordBuffer.length = 0;
+    state.recordWritable = null;
+    state.recordFileName = null;
+    state.isRecording = false;
+    if (state.recordStartTime) {
+        state.recordFrozenMs = Date.now() - state.recordStartTime;
+        state.recordStartTime = null;
+    }
+    tickDuration();
+    setRecordButtons(false);
+    return savedName;
+}
+
+// ==================== 记录控制（开始 / 停止 成对）====================
+// 切换记录按钮可用状态：记录中 → "开始记录"禁用、"停止记录"启用；反之亦然。
+function setRecordButtons(recording) {
+    if (dom.btnRecord) dom.btnRecord.disabled = recording || !serial.connected;
+    if (dom.btnRecordStop) dom.btnRecordStop.disabled = !recording;
+}
+
+// 开始记录：用 File System Access API 边采边写盘（统一记录方式）。
+async function startRecording() {
+    if (state.isRecording) return;
+    if (!serial.connected) { addLog('debug', '请先连接串口'); return; }
+    if (!window.showSaveFilePicker) {
+        addLog('debug', '⚠ 当前环境不支持边采边写盘，请通过 localhost 或 https 访问后再记录');
         return;
     }
-    const btn = dom.btnCollect;
-    if (!state.isRecording) {
-        state.isRecording = true;
-        state.history = [];
-        state.recordedCount = 0;
-        state.acquireStartTime = Date.now();
-        state.acquireFrozenMs = 0;
-        tickDuration();
-        btn.textContent = '停止采集';
-        btn.className = 'btn-danger';
-        addLog('debug', '▶ 开始记录数据（新会话）');
-    } else {
-        state.isRecording = false;
-        if (state.acquireStartTime) {
-            state.acquireFrozenMs = Date.now() - state.acquireStartTime;
-            state.acquireStartTime = null;
-        }
-        tickDuration();
-        btn.textContent = '开始采集';
-        btn.className = 'btn-primary';
-        addLog('debug', '⏹ 停止记录数据');
+    const filename = `emg_data_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.csv`;
+
+    let handle;
+    try {
+        handle = await window.showSaveFilePicker({
+            suggestedName: filename,
+            types: [{ description: 'CSV 文件', accept: { 'text/csv': ['.csv'] } }]
+        });
+    } catch (e) {
+        if (e?.name === 'AbortError') { addLog('debug', '已取消开始记录'); return; }
+        addLog('debug', `选择保存文件失败: ${e.message || e}`);
+        return;
     }
+    try {
+        const writable = await handle.createWritable();
+        await writable.write('﻿' + csvHeader());  // UTF-8 BOM + 表头
+        state.recordWritable = writable;
+        state.recordFileName = handle.name;
+    } catch (e) {
+        addLog('debug', `创建记录文件失败: ${e.message || e}`);
+        state.recordWritable = null;
+        return;
+    }
+    state.recordBuffer.length = 0;
+    state.recordedCount = 0;
+    state.isRecording = true;
+    state.recordStartTime = Date.now();
+    state.recordFrozenMs = 0;
+    tickDuration();
+    state.recordFlushTimer = setInterval(async () => {
+        const ok = await flushRecordBuffer();
+        if (!ok) { addLog('debug', '⚠ 写盘出错，自动停止记录'); await stopRecordingIfActive(); }
+    }, CONFIG.RECORD_FLUSH_MS);
+    setRecordButtons(true);
+    addLog('debug', `▶ 开始记录到文件：${handle.name}`);
+}
+
+// 停止记录：写净缓冲并关闭文件。
+async function stopRecording() {
+    if (!state.isRecording) return;
+    const saved = await stopRecordingIfActive();
+    addLog('debug', saved ? `⏹ 已停止记录，文件已保存：${saved}` : '⏹ 已停止记录');
 }
 
 function togglePause() {
     state.isPaused = !state.isPaused;
-    dom.btnPause.textContent = state.isPaused ? '继续' : '暂停';
-    addLog('debug', state.isPaused ? '显示已暂停（后台仍接收）' : '显示已恢复');
+    dom.btnPause.textContent = state.isPaused ? '继续绘图' : '暂停绘图';
+    addLog('debug', state.isPaused ? '绘图已暂停（记录不受影响）' : '绘图已恢复');
 }
 
 // ==================== 二进制协议解析 ====================
@@ -569,20 +681,23 @@ class BinaryParser {
             emg[i] = this.readInt24BE(buf, offset + i * 3);
         }
 
+        // 记录：受"记录中"控制，独立于"暂停绘图"——暂停时仍持续写盘
+        if (state.isRecording) {
+            if (!state.recordStartTime) state.recordStartTime = Date.now();
+            const imu = state.latestImu;
+            recordFrame({
+                emg,
+                imu: {
+                    accel: imu ? imu.acc : [NaN, NaN, NaN],
+                    gyro:  imu ? imu.gyro : [NaN, NaN, NaN]
+                },
+                time: formatWorldTime()
+            });
+        }
+
+        // 绘图与数值显示：受"暂停绘图"控制
         if (!state.isPaused) {
             for (let i = 0; i < 8; i++) emgCharts[i].addPoint([emg[i]]);
-
-            if (state.isRecording) {
-                if (!state.acquireStartTime) state.acquireStartTime = Date.now();
-                const imuVals = imuChart.latest();
-                state.history.push({
-                    emg,
-                    imu: { accel: imuVals.slice(0, 3), gyro: imuVals.slice(3, 6) },
-                    time: formatWorldTime()
-                });
-                state.recordedCount++;
-            }
-
             state.latestEmg = emg;
             state.uiDirty = true;
 
@@ -593,7 +708,7 @@ class BinaryParser {
             }
         }
         state.frameCount++;
-        state.frameCounter++;
+        state.emgCounter++;
     }
 
     handleImuPacket(buf, offset) {
@@ -606,25 +721,31 @@ class BinaryParser {
         const ay = dv.getInt16(offset + 10) * CONFIG.ACC_SCALE;
         const az = dv.getInt16(offset + 12) * CONFIG.ACC_SCALE;
 
+        // 始终更新最新 IMU 原始值（供记录取用，独立于"暂停绘图"）
+        state.latestImu = { acc: [ax, ay, az], gyro: [gx, gy, gz] };
+
+        // 绘图与数值显示：受"暂停绘图"控制
         if (!state.isPaused) {
             imuChart.addPoint([ax, ay, az, gx, gy, gz]);
-            state.latestImu = { acc: [ax, ay, az], gyro: [gx, gy, gz] };
             state.uiDirty = true;
         }
         state.frameCount++;
-        state.frameCounter++;
+        state.imuCounter++;
     }
 
     insertNaNFrame() {
-        for (const c of emgCharts) c.addPoint([NaN]);
-        imuChart.addPoint([NaN, NaN, NaN, NaN, NaN, NaN]);
+        // 绘图补帧：受"暂停绘图"控制
+        if (!state.isPaused) {
+            for (const c of emgCharts) c.addPoint([NaN]);
+            imuChart.addPoint([NaN, NaN, NaN, NaN, NaN, NaN]);
+        }
+        // 记录补帧：独立于"暂停绘图"
         if (state.isRecording) {
-            state.history.push({
+            recordFrame({
                 emg: Array(8).fill(NaN),
                 imu: { accel: [NaN,NaN,NaN], gyro: [NaN,NaN,NaN] },
                 time: formatWorldTime()
             });
-            state.recordedCount++;
         }
     }
 }
@@ -637,26 +758,43 @@ class SerialConnection {
         this.parser = new BinaryParser();
         this.connected = false;
         this.ports = [];
+        this.noDataTimer = null;
     }
 
+    // 只列出已授权的串口（不弹选择框）。用于页面初始化、连接成功后刷新下拉。
+    // 注意：requestPort() 必须由用户手势触发，故初始化/自动场景只能用 getPorts()。
+    async listPorts() {
+        if (!navigator.serial) { addLog('debug', '浏览器不支持 Web Serial API'); return; }
+        try {
+            this.ports = await navigator.serial.getPorts();
+            this.renderPortOptions(this.ports);
+        } catch (e) {
+            addLog('debug', `读取串口列表失败: ${e.message}`);
+        }
+    }
+
+    // 点击"刷新串口"：弹出浏览器设备选择框，可选择/更换任意设备（含没授权过的新设备）。
+    // 选中的设备排到下拉首位并默认选中；取消则仅刷新已授权列表。
     async refreshPorts() {
         if (!navigator.serial) { addLog('debug', '浏览器不支持 Web Serial API'); return; }
         const refreshBtn = dom.btnRefreshPorts;
         try {
             if (refreshBtn) refreshBtn.disabled = true;
-            let ports = await navigator.serial.getPorts();
-            if (ports.length === 0) {
-                addLog('debug', '未检测到已授权串口，正在搜索设备…');
-                try {
-                    const port = await navigator.serial.requestPort();
-                    ports = [port];
-                } catch (e) {
-                    addLog('debug', e?.name === 'AbortError' ? '已取消搜索设备' : `搜索设备失败: ${e.message}`);
-                }
+            let picked = null;
+            try {
+                picked = await navigator.serial.requestPort();
+            } catch (e) {
+                addLog('debug', e?.name === 'AbortError' ? '已取消选择设备' : `选择设备失败: ${e.message}`);
             }
-            this.ports = ports;
-            this.renderPortOptions(ports);
-            if (ports.length > 0) addLog('debug', `已刷新串口列表：${ports.length} 个`);
+            const granted = await navigator.serial.getPorts();
+            // getPorts() 对同一物理串口返回同一实例，可直接按引用去重；刚选中的排首位
+            this.ports = picked ? [picked, ...granted.filter(p => p !== picked)] : granted;
+            this.renderPortOptions(this.ports);
+            if (this.ports.length > 0) {
+                addLog('debug', picked ? `已选择串口设备，共 ${this.ports.length} 个可选` : `已刷新串口列表：${this.ports.length} 个`);
+            } else {
+                addLog('debug', '未选择任何串口设备');
+            }
         } catch (e) {
             addLog('debug', `刷新串口失败: ${e.message}`);
         } finally {
@@ -706,12 +844,26 @@ class SerialConnection {
             this.parser = new BinaryParser();
             updateConnectionUI(true);
             addLog('debug', `串口已连接 @ ${CONFIG.BAUDRATE}bps`);
-            dom.btnCollect.disabled = false;
-            this.refreshPorts();
+            setRecordButtons(false);   // 连接后启用"开始记录"、禁用"停止记录"
+            this.listPorts();          // 仅刷新已授权列表，不弹选择框
+            this.armNoDataWatch();     // 启动"无数据"看门狗：超时无帧则提示设备未开机
             this.readLoop();
         } catch (e) {
             addLog('debug', `连接失败: ${e.message}`);
         }
+    }
+
+    // 连接后看门狗：超时仍未收到任何帧 → 提示设备可能未开机。
+    // 不自动断开：串口已 open，设备稍后开机会自动开始收数据并显示。
+    armNoDataWatch() {
+        if (this.noDataTimer) clearTimeout(this.noDataTimer);
+        const baseline = state.frameCount;
+        this.noDataTimer = setTimeout(() => {
+            this.noDataTimer = null;
+            if (this.connected && state.frameCount === baseline) {
+                addLog('debug', `⚠ 已连接但 ${CONFIG.NO_DATA_TIMEOUT_MS / 1000}s 内未收到数据，请确认设备已开机并正常发送`);
+            }
+        }, CONFIG.NO_DATA_TIMEOUT_MS);
     }
 
     async readLoop() {
@@ -736,17 +888,19 @@ class SerialConnection {
     }
 
     async disconnect() {
+        if (this.noDataTimer) { clearTimeout(this.noDataTimer); this.noDataTimer = null; }
+        // 断开前若正在写盘记录，先安全收尾并关闭文件，避免句柄悬空
+        if (state.isRecording) {
+            try { await stopRecording(); } catch {}
+        }
         this.connected = false;
         stopDurationTimer();
         state.connectStartTime = null;
-        state.acquireStartTime = null;
-        state.acquireFrozenMs = 0;
+        state.recordStartTime = null;
+        state.recordFrozenMs = 0;
         state.isRecording = false;
         tickDuration();
-        const btn = dom.btnCollect;
-        btn.textContent = '开始采集';
-        btn.className = 'btn-primary';
-        btn.disabled = true;
+        setRecordButtons(false);   // connected 已置 false → 同时禁用开始/停止记录
         if (this.reader) { try { await this.reader.cancel(); } catch {} }
         if (this.port) { try { await this.port.close(); } catch {} }
         this.port = null;
@@ -793,86 +947,39 @@ function clearLogs() {
 }
 
 function clearData() {
-    state.history = [];
-    state.frameCount = 0;
-    state.recordedCount = 0;
-    state.errorCount = 0;
-    state.frameCounter = 0;
-    state.fps = 0;
-    state.acquireStartTime = null;
-    state.acquireFrozenMs = 0;
-    tickDuration();
-    dom.fps.textContent = '0';
-    dom.totalFrames.textContent = '0';
-    dom.recordedFrames.textContent = '0';
-    dom.errLines.textContent = '0';
-    dom.bufSize.textContent = '0';
-    serial.parser.lastSeq = -1;
+    // 纯绘图操作：只清画面（波形 + 数值显示）。不碰接收统计（总帧/错误/fps/丢包基准）与记录域，
+    // 也不被记录状态阻塞——记录进行中可随时清屏，正在写盘的文件不受影响。
     for (const c of emgCharts) c.clear();
     imuChart.clear();
     for (const el of dom.emgVals) if (el) el.textContent = '--';
     for (const el of dom.imuVals) if (el) el.textContent = '--';
-    addLog('debug', '所有数据已清空，采集时长已重置');
-}
-
-async function exportCSV() {
-    if (!state.history.length) { alert('暂无数据'); return; }
-    const headerCols = ['time'];
-    for (let i = 1; i <= CONFIG.EMG_CHANNELS; i++) headerCols.push(`emg${i}`);
-    headerCols.push('imu_ax','imu_ay','imu_az','imu_gx','imu_gy','imu_gz');
-
-    const rows = state.history.map(f => {
-        const emgPart = f.emg.map(v => fmtNum(v, 2)).join(',');
-        const imuPart = [...f.imu.accel, ...f.imu.gyro].map(v => fmtNum(v, 4)).join(',');
-        return `${f.time},${emgPart},${imuPart}`;
-    });
-    const csv = headerCols.join(',') + '\n' + rows.join('\n');
-    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
-    const filename = `emg_data_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.csv`;
-
-    if (window.showSaveFilePicker) {
-        try {
-            const handle = await window.showSaveFilePicker({
-                suggestedName: filename,
-                types: [{ description: 'CSV 文件', accept: { 'text/csv': ['.csv'] } }]
-            });
-            const writable = await handle.createWritable();
-            await writable.write(blob);
-            await writable.close();
-            addLog('debug', `已导出 ${state.history.length} 帧`);
-            return;
-        } catch (e) {
-            if (e?.name === 'AbortError') { addLog('debug', '已取消导出'); return; }
-            addLog('debug', '保存对话框不可用，已回退为浏览器下载');
-        }
-    }
-
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-    addLog('debug', `已导出 ${state.history.length} 帧`);
+    state.latestEmg = null;
+    state.latestImu = null;
+    addLog('debug', '绘图已清空');
 }
 
 // ==================== 动画循环 ====================
 function animate() {
     try {
         const now = performance.now();
-        if (now - state.lastFrameTime >= 1000) {
-            state.fps = state.frameCounter;
-            state.frameCounter = 0;
+        const elapsed = now - state.lastFrameTime;
+        if (elapsed >= 1000) {
+            // 按实际经过时间归一化，避免渲染卡顿拉长结算窗口导致速率虚高/跳变
+            state.emgFps = Math.round(state.emgCounter * 1000 / elapsed);
+            state.imuFps = Math.round(state.imuCounter * 1000 / elapsed);
+            state.emgCounter = 0;
+            state.imuCounter = 0;
             state.lastFrameTime = now;
         }
 
         if (state.uiDirty) {
             state.uiDirty = false;
-            dom.fps.textContent = state.fps;
+            dom.emgFps.textContent = state.emgFps;
+            dom.imuFps.textContent = state.imuFps;
             dom.totalFrames.textContent = state.frameCount;
             dom.recordedFrames.textContent = state.recordedCount;
             dom.errLines.textContent = state.errorCount;
-            dom.bufSize.textContent = state.history.length;
+            dom.bufSize.textContent = state.recordBuffer.length;
 
             if (state.latestEmg) {
                 for (let i = 0; i < state.latestEmg.length; i++) {
@@ -888,10 +995,12 @@ function animate() {
                 }
             }
             if (state.zoomType) updateZoomData();
+
+            // 仅在有新数据时重绘常驻图表；无数据/暂停时跳过，避免空转满负荷重绘
+            for (const c of emgCharts) c.draw();
+            imuChart.draw();
         }
 
-        for (const c of emgCharts) c.draw();
-        imuChart.draw();
         if (state.zoomChart) state.zoomChart.draw();
     } catch (e) {
         state.errorCount++;
@@ -942,16 +1051,18 @@ function cacheDom() {
     dom.btnConnect = document.getElementById('btn-connect');
     dom.btnDisconnect = document.getElementById('btn-disconnect');
     dom.btnRefreshPorts = document.getElementById('btn-refresh-ports');
-    dom.btnCollect = document.getElementById('btn-collect');
+    dom.btnRecord = document.getElementById('btn-record');
+    dom.btnRecordStop = document.getElementById('btn-record-stop');
     dom.btnPause = document.getElementById('btn-pause');
     dom.portSelect = document.getElementById('serial-port-select');
-    dom.fps = document.getElementById('fps');
+    dom.emgFps = document.getElementById('emg-fps');
+    dom.imuFps = document.getElementById('imu-fps');
     dom.totalFrames = document.getElementById('total-frames');
     dom.recordedFrames = document.getElementById('recorded-frames');
     dom.errLines = document.getElementById('err-lines');
     dom.bufSize = document.getElementById('buf-size');
     dom.connDuration = document.getElementById('conn-duration');
-    dom.acqDuration = document.getElementById('acq-duration');
+    dom.recordDuration = document.getElementById('record-duration');
     dom.logData = document.getElementById('logData');
     dom.logDebug = document.getElementById('logDebug');
     dom.dataLogCount = document.getElementById('data-log-count');
@@ -967,7 +1078,7 @@ createValueGrid('vals-imu', ['Ax','Ay','Az','Gx','Gy','Gz'], IMU_COLORS);
 cacheDom();
 cacheValueRefs();
 initCharts();
-serial.refreshPorts();
+serial.listPorts();
 animate();
 
 window.addEventListener('load', runSplashIntro, { once: true });
@@ -976,3 +1087,6 @@ applyTheme(localStorage.getItem('theme-preference') || 'dark');
 addLog('debug', '系统就绪');
 addLog('debug', `连接 EMG 手环 (${CONFIG.BAUDRATE}bps)`);
 addLog('debug', '协议: D2D2D2帧头, AA=EMG(8ch×24bit), BB=IMU(6ch×16bit)');
+addLog('debug', window.showSaveFilePicker
+    ? '记录模式：边采边写盘（点"开始记录"选保存文件，数据实时写入磁盘，无内存上限）'
+    : '⚠ 当前环境不支持边采边写盘记录，请通过 localhost 或 https 访问');

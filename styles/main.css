@@ -235,43 +235,42 @@ h1 {
 }
 
 /* ==================== Header Cards ==================== */
-.header-cards {
-    display: grid;
-    grid-template-columns: auto 1fr auto;
-    gap: 10px;
+.controls {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: stretch;
 }
-.header-card {
+/* 三个功能分区：系统状态 / 数据绘图 / 文件保存 */
+.control-zone {
+    flex: 1 1 auto;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
     background: #0f172a;
     border: 1px solid #1e293b;
     border-radius: 8px;
-    padding: 10px 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
+    padding: 8px 10px;
 }
-.header-card-title {
-    font-size: 0.72rem;
+.zone-label {
+    font-size: 0.68rem;
     color: #475569;
     letter-spacing: 0.06em;
     text-transform: uppercase;
     font-weight: 600;
-    padding-bottom: 4px;
-    border-bottom: 1px solid #1e293b;
-}
-.header-card-conn { min-width: 160px; }
-.header-card-data { min-width: 200px; }
-
-.conn-buttons,
-.data-buttons {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: clamp(4px, 0.4vw, 8px);
+    white-space: nowrap;
+    padding-right: 8px;
+    margin-right: 2px;
+    border-right: 1px solid #1e293b;
 }
 
 .serial-port-select {
     height: 28px;
-    width: 100%;
+    flex: 1 1 200px;
+    min-width: 180px;
+    max-width: 360px;
     padding: 2px 8px;
     border-radius: 5px;
     border: 1px solid #334155;
@@ -356,9 +355,9 @@ button {
 button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* 顶部控制区按钮自适应尺寸 */
-.header-card .btn-primary,
-.header-card .btn-secondary,
-.header-card .btn-danger {
+.control-zone .btn-primary,
+.control-zone .btn-secondary,
+.control-zone .btn-danger {
     font-size: clamp(0.7rem, 0.85vw, 0.95rem);
     padding: clamp(5px, 0.5vw, 8px) clamp(8px, 1vw, 14px);
     min-width: clamp(56px, 5.5vw, 88px);
@@ -383,10 +382,10 @@ body.light-theme {
 }
 body.light-theme header,
 body.light-theme .panel,
-body.light-theme .header-card { background: #ffffff; border-color: #cbd5e1; }
+body.light-theme .control-zone { background: #ffffff; border-color: #cbd5e1; }
 body.light-theme .panel-header,
 body.light-theme .modal-header { border-bottom-color: #e2e8f0; }
-body.light-theme .header-card-title { color: #64748b; border-bottom-color: #e2e8f0; }
+body.light-theme .zone-label { color: #64748b; border-right-color: #e2e8f0; }
 body.light-theme .status-pill { background: #ffffff; color: #334155; border-color: #cbd5e1; }
 body.light-theme .metric-card { background: #f1f5f9; border-color: #cbd5e1; }
 body.light-theme .metric-label { color: #64748b; }
@@ -578,15 +577,12 @@ canvas {
 .log-entry { margin-bottom: 2px; color: #cbd5e1; }
 .log-entry.data { color: #4ade80; }
 .log-entry.debug { color: #64748b; }
-.log-entry.error { color: #f87171; }
-.log-entry.warn { color: #fbbf24; }
 .timestamp { color: #334155; margin-right: 6px; }
 
 /* ==================== 响应式 ==================== */
 @media (max-width: 1200px) {
     .row-emg { grid-template-columns: repeat(2, 1fr); }
-    .header-cards { grid-template-columns: 1fr 1fr; }
-    .header-card-data { grid-column: 1 / -1; }
+    .control-zone { flex-basis: calc(50% - 4px); }
 }
 @media (max-width: 900px) {
     .container { grid-template-columns: 1fr; height: auto; }
@@ -595,7 +591,6 @@ canvas {
     .row-logs { grid-template-columns: 1fr; }
     .header-top { flex-direction: column; align-items: flex-start; }
     .header-top-right { width: 100%; justify-content: space-between; }
-    .header-cards { grid-template-columns: 1fr; }
-    .header-card-data { grid-column: auto; }
+    .control-zone { flex-basis: 100%; }
     .metrics-grid { grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); }
 }

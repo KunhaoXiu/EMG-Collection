@@ -44,58 +44,60 @@
                 </div>
             </div>
 
-            <div class="header-cards">
-                <div class="header-card header-card-conn">
-                    <div class="header-card-title">连接控制</div>
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <span class="metric-label">EMG</span>
+                    <div class="metric-value"><span id="emg-fps">0</span><small>Hz</small></div>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">IMU</span>
+                    <div class="metric-value"><span id="imu-fps">0</span><small>Hz</small></div>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">总帧</span>
+                    <div class="metric-value"><span id="total-frames">0</span></div>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">已录</span>
+                    <div class="metric-value"><span id="recorded-frames">0</span></div>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">错误</span>
+                    <div class="metric-value"><span id="err-lines">0</span></div>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">缓存</span>
+                    <div class="metric-value"><span id="buf-size">0</span></div>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">连接时长</span>
+                    <div class="metric-value"><span id="conn-duration">00:00:00</span></div>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">记录时长</span>
+                    <div class="metric-value"><span id="record-duration">00:00:00</span></div>
+                </div>
+            </div>
+
+            <!-- 三个功能分区：系统状态 / 数据绘图 / 文件保存 -->
+            <div class="controls">
+                <div class="control-zone">
+                    <span class="zone-label">系统状态</span>
                     <select id="serial-port-select" class="serial-port-select" title="串口选择"></select>
-                    <div class="conn-buttons">
-                        <button class="btn-secondary" id="btn-refresh-ports" onclick="serial.refreshPorts()">刷新串口</button>
-                        <button class="btn-primary" id="btn-connect" onclick="serial.connect()">连接串口</button>
-                        <button class="btn-danger" id="btn-disconnect" onclick="serial.disconnect()" disabled>断开</button>
-                    </div>
+                    <button class="btn-secondary" id="btn-refresh-ports" onclick="serial.refreshPorts()">刷新串口</button>
+                    <button class="btn-primary" id="btn-connect" onclick="serial.connect()">连接串口</button>
+                    <button class="btn-danger" id="btn-disconnect" onclick="serial.disconnect()" disabled>断开</button>
                 </div>
-                <div class="header-card header-card-metrics">
-                    <div class="header-card-title">实时指标</div>
-                    <div class="metrics-grid">
-                        <div class="metric-card">
-                            <span class="metric-label">帧率</span>
-                            <div class="metric-value"><span id="fps">0</span><small>Hz</small></div>
-                        </div>
-                        <div class="metric-card">
-                            <span class="metric-label">总帧</span>
-                            <div class="metric-value"><span id="total-frames">0</span></div>
-                        </div>
-                        <div class="metric-card">
-                            <span class="metric-label">已录</span>
-                            <div class="metric-value"><span id="recorded-frames">0</span></div>
-                        </div>
-                        <div class="metric-card">
-                            <span class="metric-label">错误</span>
-                            <div class="metric-value"><span id="err-lines">0</span></div>
-                        </div>
-                        <div class="metric-card">
-                            <span class="metric-label">缓存</span>
-                            <div class="metric-value"><span id="buf-size">0</span></div>
-                        </div>
-                        <div class="metric-card">
-                            <span class="metric-label">连接时长</span>
-                            <div class="metric-value"><span id="conn-duration">00:00:00</span></div>
-                        </div>
-                        <div class="metric-card">
-                            <span class="metric-label">采集时长</span>
-                            <div class="metric-value"><span id="acq-duration">00:00:00</span></div>
-                        </div>
-                    </div>
+                <div class="control-zone">
+                    <span class="zone-label">数据绘图</span>
+                    <button class="btn-secondary" onclick="togglePause()" id="btn-pause">暂停绘图</button>
+                    <button class="btn-secondary" onclick="clearData()">清空数据</button>
+                    <button class="btn-secondary" onclick="clearLogs()">清日志</button>
                 </div>
-                <div class="header-card header-card-data">
-                    <div class="header-card-title">数据操作</div>
-                    <div class="data-buttons">
-                        <button class="btn-primary" onclick="toggleCollect()" id="btn-collect" disabled>开始采集</button>
-                        <button class="btn-secondary" onclick="togglePause()" id="btn-pause">暂停</button>
-                        <button class="btn-secondary" onclick="exportCSV()">导出CSV</button>
-                        <button class="btn-secondary" onclick="clearData()">清空数据</button>
-                        <button class="btn-secondary" onclick="clearLogs()">清日志</button>
-                    </div>
+                <div class="control-zone">
+                    <span class="zone-label">文件保存</span>
+                    <button class="btn-primary" onclick="startRecording()" id="btn-record" disabled>开始记录</button>
+                    <button class="btn-danger" onclick="stopRecording()" id="btn-record-stop" disabled>停止记录</button>
                 </div>
             </div>
         </header>
