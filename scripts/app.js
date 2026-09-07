@@ -282,7 +282,7 @@ function buildEmgPanels() {
         panel.style.setProperty('--ch', EMG_COLORS[i]);
         panel.innerHTML = `
             <div class="panel-header">
-                <div class="panel-title"><span class="dot"></span>EMG CH${i+1}</div>
+                <div class="panel-title"><span class="dot"></span>CH${i+1}</div>
                 <button class="btn-icon" onclick="openZoom('emg', ${i})" title="放大">🔍</button>
             </div>
             <canvas id="canvas-emg-${i}"></canvas>
